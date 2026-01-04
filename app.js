@@ -743,6 +743,13 @@ function drawMonthlyChart(){
   });
   ctx.stroke();
 
+  // area fill
+  ctx.lineTo(padL+w, padT+h);
+  ctx.lineTo(padL, padT+h);
+  ctx.closePath();
+  ctx.fillStyle = "rgba(47,95,255,.10)";
+  ctx.fill();
+
   // points + highlight current month
   data.forEach((d,i)=>{
     const x = padL + (w * (i/11));
@@ -1064,7 +1071,6 @@ function exportExcel(){
   const yd = yearData(year);
   const cat = catalogMap(year);
 
-  // Build tables
   const dates = Object.keys(yd.days || {}).sort();
   const daily = [];
   const detail = [];
@@ -1099,7 +1105,9 @@ function exportExcel(){
   const totalN = daily.reduce((s,x)=>s+x.n,0);
   const totalEuro = daily.reduce((s,x)=>s+parseNum(x.total),0);
 
-  const chartUrl = chartCanvasToPngDataUrl();
+  // Generate chart image and embed via MHTML (Excel shows it reliably)
+  const chartUrl = chartCanvasToPngDataUrl(); // data:image/png;base64,...
+  const pngBase64 = chartUrl.split(",")[1] || "";
 
   const css = `
     body{font-family:Calibri, Arial, sans-serif; color:#1b2a4a; }
@@ -1149,40 +1157,59 @@ function exportExcel(){
     </table>`;
 
   const html = `
-  <html xmlns:o="urn:schemas-microsoft-com:office:office"
-        xmlns:x="urn:schemas-microsoft-com:office:excel"
-        xmlns="http://www.w3.org/TR/REC-html40">
-    <head>
-      <meta charset="utf-8" />
-      <style>${css}</style>
-    </head>
-    <body>
-      <div class="wrap">
-        <h1>Report Chirurgie ${escapeHtml(year)}</h1>
-        <div class="meta">Generato da Chirurgie Tracker (PWA) · include grafico + dettaglio interventi</div>
+    <html>
+      <head>
+        <meta charset="utf-8" />
+        <style>${css}</style>
+      </head>
+      <body>
+        <div class="wrap">
+          <h1>Report Chirurgie ${escapeHtml(year)}</h1>
+          <div class="meta">Generato da Chirurgie Tracker · include grafico + dettaglio interventi</div>
 
-        <div class="imgwrap">
-          <img src="${chartUrl}" style="width:100%; max-width:1100px;" />
+          <div class="imgwrap">
+            <img src="chart.png" style="width:100%; max-width:1100px;" />
+          </div>
+
+          <h2>Riepilogo</h2>
+          ${tableSummary}
+
+          <h2>Mensile</h2>
+          ${tableMonthly}
+
+          <h2>Giornaliero</h2>
+          ${tableDaily}
+
+          <h2>Dettaglio interventi (giorno per giorno)</h2>
+          ${tableDetail}
         </div>
-
-        <h2>Riepilogo</h2>
-        ${tableSummary}
-
-        <h2>Mensile</h2>
-        ${tableMonthly}
-
-        <h2>Giornaliero</h2>
-        ${tableDaily}
-
-        <h2>Dettaglio interventi (giorno per giorno)</h2>
-        ${tableDetail}
-      </div>
-    </body>
-  </html>
+      </body>
+    </html>
   `;
 
-  const blob = new Blob([html], { type:"application/vnd.ms-excel;charset=utf-8" });
-  downloadBlob(blob, `Chirurgie_${year}_Report.xls`);
+  const boundary = "----=_Chirurgie_" + Math.random().toString(16).slice(2);
+  const eol = "\r\n";
+  const chunk = (b64) => b64.replace(/(.{76})/g, "$1"+eol);
+
+  const mht =
+    "MIME-Version: 1.0" + eol +
+    `Content-Type: multipart/related; boundary="${boundary}"` + eol + eol +
+
+    `--${boundary}` + eol +
+    "Content-Type: text/html; charset=utf-8" + eol +
+    "Content-Location: report.html" + eol + eol +
+    html + eol +
+
+    `--${boundary}` + eol +
+    "Content-Type: image/png" + eol +
+    "Content-Transfer-Encoding: base64" + eol +
+    "Content-Location: chart.png" + eol + eol +
+    chunk(pngBase64) + eol +
+
+    `--${boundary}--` + eol;
+
+  const blob = new Blob([mht], { type:"multipart/related; boundary=" + boundary });
+  downloadBlob(blob, `Chirurgie_${year}_Report.mht`);
 }
 
 function buildSpreadsheetML({ year, detail, daily, monthly, summary }){
@@ -1329,44 +1356,16 @@ function wire(){
 
   window.addEventListener("keydown", (e)=>{
     if(!modal.classList.contains("show")) return;
-    if(e.key === "Escape") { closeModal(); closeCatalogModal(); closeChartModal(); }
+    if(e.key === "Escape") { closeModal(); closeCatalogModal();  }
     if(e.key === "Enter" && (e.ctrlKey || e.metaKey)) confirmModal();
   });
 
   window.addEventListener("resize", ()=>drawChart());
 
-  
-  // Chart modal controls (close + zoom)
-  safeOn("closeChart","click", closeChartModal);
-  const _chartM = getChartModalEl();
-  if(_chartM){
-    _chartM.addEventListener("click", (e)=>{ if(e.target === _chartM) closeChartModal(); });
-  }
-  safeOn("zoomInBtn","click", ()=>{ chartZoom = Math.min(4, chartZoom + 0.35); drawZoomChart(); });
-  safeOn("zoomOutBtn","click", ()=>{ chartZoom = Math.max(1, chartZoom - 0.35); drawZoomChart(); });
 
-// Chart interactions
-    // Chart interactions: click -> open month detail
-  const mainChart = $("#chart");
-  if(mainChart){
-    mainChart.addEventListener("click", (ev)=>{
-      const hit = mainChart._hit;
-      if(!hit) return;
-      const rect = mainChart.getBoundingClientRect();
-      const xCss = ev.clientX - rect.left;
-      const dpr = hit.dpr || (window.devicePixelRatio||1);
-      const x = xCss * dpr;
-      const rel = (x - hit.padL) / hit.w;
-      if(rel < 0 || rel > 1) return;
-      const idx = Math.max(0, Math.min(hit.n-1, Math.round(rel * (hit.n-1))));
-      const y = getYear();
-      const date = allDailyTotals(y)[idx]?.date;
-      if(!date) return;
-      openChartModal(date.slice(0,7));
-    });
-  }
 
 }
+
 
 
 function ensureCatalogFlags(){
