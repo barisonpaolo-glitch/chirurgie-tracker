@@ -1,4 +1,4 @@
-const CACHE_NAME = "chirurgie-tracker-pro-v4_5";
+const CACHE_NAME = "chirurgie-tracker-pro-v4_6";
 const ASSETS = [
   "./",
   "./index.html",
