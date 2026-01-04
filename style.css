@@ -375,3 +375,15 @@ hr.sep{
 
 .checkrow{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--muted);user-select:none}
 .checkrow input{width:16px;height:16px}
+
+.zoomwrap{
+  overflow-x:auto;
+  overflow-y:hidden;
+  border:1px solid rgba(169,181,200,.55);
+  border-radius:14px;
+  padding:10px;
+  background:rgba(255,255,255,.75);
+}
+.zoomwrap canvas{display:block; min-width:520px}
+
+.ver{font-size:12px; font-weight:700; color:rgba(255,255,255,.85); margin-left:8px; padding:3px 8px; border:1px solid rgba(255,255,255,.25); border-radius:999px}

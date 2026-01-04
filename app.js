@@ -461,8 +461,20 @@ function makeRid(dateStr){
 }
 
 
+
+function byId(id){ return document.getElementById(id); }
+
+function safeOn(id, ev, fn){
+  const el = byId(id) || document.querySelector("#"+id);
+  if(!el) return;
+  el.addEventListener(ev, fn);
+}
+
+function getCatalogModalEl(){ return byId("catalogModal"); }
+function getChartModalEl(){ return byId("chartModal"); }
+
 // ---------------- Catalog modal (CRUD interventi) ----------------
-const catalogModal = $("#catalogModal");
+let catalogModal = null;
 let catalogCtx = null;
 
 function getCatalog(year){
@@ -479,6 +491,11 @@ function nextCatalogId(year){
 }
 
 function openCatalogModal(){
+  catalogModal = getCatalogModalEl();
+  if(!catalogModal){
+    alert("Errore: finestra Catalogo non trovata. Aggiorna la pagina (Ctrl+F5) o reinstalla la PWA.");
+    return;
+  }
   const y = getYear();
   catalogCtx = { year: y, selectedId: null };
   $("#catSearch").value = "";
@@ -489,6 +506,8 @@ function openCatalogModal(){
   $("#catSearch").focus();
 }
 function closeCatalogModal(){
+  catalogModal = getCatalogModalEl();
+  if(!catalogModal) return;
   if(!catalogModal) return;
   catalogModal.classList.remove("show");
   catalogCtx = null;
@@ -625,30 +644,73 @@ function toggleArchiveCatalogItem(){
 
 
 // ------------- Chart -------------
-function drawChart(){
+function monthKeyFromDate(dateStr){ return dateStr.slice(0,7); }
+
+function monthTotals(year){
+  const yd = yearData(String(year));
+  const out = Array.from({length:12}, (_,i)=>({ idx:i, key:`${year}-${String(i+1).padStart(2,"0")}`, n:0, total:0 }));
+  const days = yd.days || {};
+  for(const d of Object.keys(days)){
+    const m = d.slice(0,7);
+    const recs = days[d] || [];
+    const t = recs.reduce((s,r)=>s+parseNum(r.price),0);
+    const obj = out.find(x=>x.key===m);
+    if(obj){
+      obj.n += recs.length;
+      obj.total += t;
+    }
+  }
+  return out;
+}
+
+function dailyTotalsForMonth(year, monthKey){
+  const yd = yearData(String(year));
+  const days = yd.days || {};
+  const list = Object.keys(days).filter(d=>d.startsWith(monthKey)).sort();
+  // Ensure days with 0 are present
+  const y = monthKey.slice(0,4);
+  const m = monthKey.slice(5,7);
+  const first = new Date(`${y}-${m}-01T00:00:00`);
+  const next = new Date(first); next.setMonth(next.getMonth()+1);
+  const maxDay = Math.round((next-first)/86400000);
+  const out = [];
+  for(let i=1;i<=maxDay;i++){
+    const d = `${monthKey}-${String(i).padStart(2,"0")}`;
+    const recs = days[d] || [];
+    out.push({ date:d, n: recs.length, total: recs.reduce((s,r)=>s+parseNum(r.price),0) });
+  }
+  return out;
+}
+
+function drawMonthlyChart(){
   const y = getYear();
   const dateStr = getDate();
-  const data = allDailyTotals(y);
+  const mKey = monthKeyFromDate(dateStr);
+  const data = monthTotals(y);
   const canvas = $("#chart");
   const ctx = canvas.getContext("2d");
 
   const rect = canvas.getBoundingClientRect();
   const dpr = window.devicePixelRatio || 1;
-  canvas.width = Math.max(320, Math.floor(rect.width * dpr));
-  canvas.height = Math.floor(210 * dpr);
+  canvas.width = Math.max(360, Math.floor(rect.width * dpr));
+  canvas.height = Math.floor(230 * dpr);
 
   ctx.clearRect(0,0,canvas.width, canvas.height);
 
-  const padL = 52*dpr, padR = 14*dpr, padT = 14*dpr, padB = 28*dpr;
+  const padL = 56*dpr, padR = 18*dpr, padT = 16*dpr, padB = 44*dpr;
   const w = canvas.width - padL - padR;
   const h = canvas.height - padT - padB;
 
-  const maxY = Math.max(1, ...data.map(d=>d.total));
-  const minY = 0;
+  const values = data.map(d=>d.total);
+  const max = Math.max(1, ...values);
+  const maxY = max * 1.12;
 
-  // grid
+  // grid + y labels
+  ctx.strokeStyle = "rgba(169,181,200,.55)";
   ctx.lineWidth = 1*dpr;
-  ctx.strokeStyle = "rgba(91,107,132,.22)";
+  ctx.fillStyle = "rgba(91,107,132,.95)";
+  ctx.font = `${12*dpr}px system-ui`;
+
   const steps = 4;
   for(let i=0;i<=steps;i++){
     const y0 = padT + (h * i/steps);
@@ -656,56 +718,241 @@ function drawChart(){
     ctx.moveTo(padL, y0);
     ctx.lineTo(padL+w, y0);
     ctx.stroke();
-  }
-
-  // y labels
-  ctx.fillStyle = "rgba(91,107,132,.92)";
-  ctx.font = `${12*dpr}px system-ui`;
-  for(let i=0;i<=steps;i++){
-    const v = (maxY * (1 - i/steps));
-    const y0 = padT + (h * i/steps);
+    const v = maxY * (1 - i/steps);
     const lbl = euro(v).replace(/\u00A0/g," ");
     ctx.fillText(lbl, 6*dpr, y0 + 4*dpr);
+  }
+
+  // x labels
+  const monthLbl = ["Gen","Feb","Mar","Apr","Mag","Giu","Lug","Ago","Set","Ott","Nov","Dic"];
+  ctx.fillStyle = "rgba(91,107,132,.95)";
+  ctx.font = `${12*dpr}px system-ui`;
+  data.forEach((d,i)=>{
+    const x = padL + (w * (i/11));
+    ctx.fillText(monthLbl[i], x - 10*dpr, padT + h + 28*dpr);
+  });
+
+  // line
+  ctx.strokeStyle = "rgba(27,42,74,.95)";
+  ctx.lineWidth = 2*dpr;
+  ctx.beginPath();
+  data.forEach((d,i)=>{
+    const x = padL + (w * (i/11));
+    const yv = padT + h * (1 - (d.total / maxY));
+    if(i===0) ctx.moveTo(x,yv); else ctx.lineTo(x,yv);
+  });
+  ctx.stroke();
+
+  // points + highlight current month
+  data.forEach((d,i)=>{
+    const x = padL + (w * (i/11));
+    const yv = padT + h * (1 - (d.total / maxY));
+    ctx.fillStyle = (d.key===mKey) ? "rgba(47,95,255,.95)" : "rgba(27,42,74,.85)";
+    ctx.beginPath();
+    ctx.arc(x,yv, 4.3*dpr, 0, Math.PI*2);
+    ctx.fill();
+  });
+
+  // title hint
+  ctx.fillStyle = "rgba(27,42,74,.95)";
+  ctx.font = `${13*dpr}px system-ui`;
+  ctx.fillText("Totali mensili · tocchi un mese per dettaglio", padL, 14*dpr);
+
+  // store hit zones
+  canvas._monthHit = { padL, padT, w, h, dpr };
+}
+
+function drawChart(){
+  // Backward compatible name called by render()
+  drawMonthlyChart();
+}
+
+// ---------------- Chart zoom modal ----------------
+let chartModal = null;
+let chartZoom = 1.4;
+let chartMonthKey = null;
+
+function openChartModal(monthKey){
+  chartModal = getChartModalEl();
+  if(!chartModal){
+    alert("Errore: finestra Grafico non trovata. Aggiorna la pagina.");
+    return;
+  }
+  chartMonthKey = monthKey;
+  chartZoom = 1.6;
+
+  const title = byId("chartTitle");
+  const sub = byId("chartSubTitle");
+  const [yy, mm] = monthKey.split("-");
+  const monthNames = ["Gennaio","Febbraio","Marzo","Aprile","Maggio","Giugno","Luglio","Agosto","Settembre","Ottobre","Novembre","Dicembre"];
+  if(title) title.textContent = `Dettaglio mese · ${monthNames[Number(mm)-1]} ${yy}`;
+  if(sub) sub.textContent = "Usa + / − per zoom e scorri orizzontalmente.";
+
+  chartModal.classList.add("show");
+  drawZoomChart();
+}
+
+function closeChartModal(){
+  chartModal = getChartModalEl();
+  if(!chartModal) return;
+  chartModal.classList.remove("show");
+  chartMonthKey = null;
+}
+
+function drawZoomChart(){
+  if(!chartMonthKey) return;
+  const y = getYear();
+  const data = dailyTotalsForMonth(y, chartMonthKey);
+  const canvas = byId("zoomChart");
+  const wrap = byId("zoomWrap");
+  if(!canvas || !wrap) return;
+
+  const dpr = window.devicePixelRatio || 1;
+
+  const baseW = Math.max(700, wrap.getBoundingClientRect().width);
+  const width = Math.floor(baseW * chartZoom * dpr);
+  const height = Math.floor(260 * dpr);
+  canvas.width = width;
+  canvas.height = height;
+
+  // Make scroll area
+  canvas.style.width = `${Math.floor(width/dpr)}px`;
+  canvas.style.height = "260px";
+
+  const ctx = canvas.getContext("2d");
+  ctx.clearRect(0,0,width,height);
+
+  const padL = 56*dpr, padR = 18*dpr, padT = 16*dpr, padB = 46*dpr;
+  const w = width - padL - padR;
+  const h = height - padT - padB;
+
+  const max = Math.max(1, ...data.map(d=>d.total));
+  const maxY = max * 1.12;
+
+  // grid
+  ctx.strokeStyle = "rgba(169,181,200,.55)";
+  ctx.lineWidth = 1*dpr;
+  ctx.fillStyle = "rgba(91,107,132,.95)";
+  ctx.font = `${12*dpr}px system-ui`;
+  const steps = 4;
+  for(let i=0;i<=steps;i++){
+    const y0 = padT + (h * i/steps);
+    ctx.beginPath(); ctx.moveTo(padL,y0); ctx.lineTo(padL+w,y0); ctx.stroke();
+    const v = maxY*(1-i/steps);
+    ctx.fillText(euro(v).replace(/\u00A0/g," "), 6*dpr, y0+4*dpr);
+  }
+
+  // x labels (days every 2)
+  ctx.fillStyle = "rgba(91,107,132,.95)";
+  ctx.font = `${11*dpr}px system-ui`;
+  for(let i=0;i<data.length;i++){
+    if((i+1)%2!==0) continue;
+    const x = padL + (w * (i/(data.length-1)));
+    ctx.fillText(String(i+1), x-5*dpr, padT+h+28*dpr);
   }
 
   // line
   ctx.strokeStyle = "rgba(27,42,74,.95)";
   ctx.lineWidth = 2*dpr;
   ctx.beginPath();
-  data.forEach((d, i)=>{
+  data.forEach((d,i)=>{
     const x = padL + (w * (i/(data.length-1)));
-    const yv = padT + h * (1 - (d.total - minY)/(maxY - minY));
+    const yv = padT + h*(1-(d.total/maxY));
     if(i===0) ctx.moveTo(x,yv); else ctx.lineTo(x,yv);
   });
   ctx.stroke();
 
-  // highlight selected day
-  const idx = data.findIndex(d=>d.date===dateStr);
-  if(idx>=0){
-    const x = padL + (w * (idx/(data.length-1)));
-    const yv = padT + h * (1 - (data[idx].total - minY)/(maxY - minY));
-    ctx.fillStyle = "rgba(47,95,255,.95)";
-    ctx.beginPath();
-    ctx.arc(x,yv, 4.5*dpr, 0, Math.PI*2);
-    ctx.fill();
+  // points
+  ctx.fillStyle = "rgba(27,42,74,.85)";
+  data.forEach((d,i)=>{
+    const x = padL + (w * (i/(data.length-1)));
+    const yv = padT + h*(1-(d.total/maxY));
+    ctx.beginPath(); ctx.arc(x,yv, 3.6*dpr, 0, Math.PI*2); ctx.fill();
+  });
 
-    const label = `${dateStr} • ${euro(data[idx].total)} • ${data[idx].n} int.`;
-    ctx.font = `${12*dpr}px system-ui`;
-    const tw = ctx.measureText(label).width + 12*dpr;
-    const th = 20*dpr;
-    const bx = Math.min(canvas.width - tw - 8*dpr, Math.max(8*dpr, x - tw/2));
-    const by = Math.max(8*dpr, yv - 28*dpr);
-
-    // bubble
-    ctx.fillStyle = "rgba(255,255,255,.96)";
-    ctx.strokeStyle = "rgba(230,235,243,1)";
-    ctx.lineWidth = 1*dpr;
-    roundRect(ctx, bx, by, tw, th, 8*dpr);
-    ctx.fill(); ctx.stroke();
-    ctx.fillStyle = "rgba(11,18,32,.92)";
-    ctx.fillText(label, bx + 6*dpr, by + 14*dpr);
+  // set scroll roughly to today if same month
+  const today = getDate();
+  if(today.startsWith(chartMonthKey)){
+    const day = Number(today.slice(8,10));
+    const target = Math.max(0, (canvas.width/dpr) * ((day-1)/(data.length-1)) - (wrap.clientWidth/2));
+    wrap.scrollLeft = target;
   }
 }
+
+function chartCanvasToPngDataUrl(){
+  // build a crisp monthly chart for export
+  const y = getYear();
+  const data = monthTotals(y);
+  const dpr = 2;
+  const width = 1200*dpr;
+  const height = 420*dpr;
+
+  const c = document.createElement("canvas");
+  c.width = width;
+  c.height = height;
+  const ctx = c.getContext("2d");
+
+  ctx.clearRect(0,0,width,height);
+
+  const padL = 90*dpr, padR = 30*dpr, padT = 40*dpr, padB = 80*dpr;
+  const w = width - padL - padR;
+  const h = height - padT - padB;
+  const values = data.map(d=>d.total);
+  const max = Math.max(1, ...values);
+  const maxY = max*1.12;
+
+  // background
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0,0,width,height);
+
+  // grid
+  ctx.strokeStyle = "rgba(169,181,200,.6)";
+  ctx.lineWidth = 1*dpr;
+  ctx.fillStyle = "rgba(91,107,132,1)";
+  ctx.font = `${14*dpr}px system-ui`;
+  const steps = 4;
+  for(let i=0;i<=steps;i++){
+    const y0 = padT + h*(i/steps);
+    ctx.beginPath(); ctx.moveTo(padL,y0); ctx.lineTo(padL+w,y0); ctx.stroke();
+    const v = maxY*(1-i/steps);
+    ctx.fillText(euro(v).replace(/\u00A0/g," "), 10*dpr, y0+5*dpr);
+  }
+
+  const monthLbl = ["Gen","Feb","Mar","Apr","Mag","Giu","Lug","Ago","Set","Ott","Nov","Dic"];
+  ctx.fillStyle = "rgba(91,107,132,1)";
+  ctx.font = `${14*dpr}px system-ui`;
+  data.forEach((d,i)=>{
+    const x = padL + w*(i/11);
+    ctx.fillText(monthLbl[i], x-12*dpr, padT+h+44*dpr);
+  });
+
+  // line
+  ctx.strokeStyle = "rgba(27,42,74,1)";
+  ctx.lineWidth = 3*dpr;
+  ctx.beginPath();
+  data.forEach((d,i)=>{
+    const x = padL + w*(i/11);
+    const yv = padT + h*(1-(d.total/maxY));
+    if(i===0) ctx.moveTo(x,yv); else ctx.lineTo(x,yv);
+  });
+  ctx.stroke();
+
+  // points
+  ctx.fillStyle = "rgba(27,42,74,.9)";
+  data.forEach((d,i)=>{
+    const x = padL + w*(i/11);
+    const yv = padT + h*(1-(d.total/maxY));
+    ctx.beginPath(); ctx.arc(x,yv, 6*dpr, 0, Math.PI*2); ctx.fill();
+  });
+
+  // title
+  ctx.fillStyle = "rgba(27,42,74,1)";
+  ctx.font = `${18*dpr}px system-ui`;
+  ctx.fillText(`Chirurgie ${y} · andamento mensile`, padL, 26*dpr);
+
+  return c.toDataURL("image/png");
+}
+
 function roundRect(ctx, x, y, w, h, r){
   ctx.beginPath();
   ctx.moveTo(x+r,y);
@@ -722,48 +969,125 @@ function exportExcel(){
   const yd = yearData(year);
   const cat = catalogMap(year);
 
-  const rowsDetail = [];
-  const rowsDaily = [];
-  const rowsMonthly = new Map();
+  // Build tables
+  const dates = Object.keys(yd.days || {}).sort();
+  const daily = [];
+  const detail = [];
+  const monthly = new Map();
 
-  const dates = Object.keys(yd.days).sort();
   for(const d of dates){
     const recs = yd.days[d] || [];
     const dayTotal = recs.reduce((s,r)=>s+parseNum(r.price),0);
-    rowsDaily.push([d, recs.length, dayTotal]);
+    daily.push({ date:d, n:recs.length, total:dayTotal });
 
     const m = d.slice(0,7);
-    if(!rowsMonthly.has(m)) rowsMonthly.set(m, {n:0, total:0});
-    rowsMonthly.get(m).n += recs.length;
-    rowsMonthly.get(m).total += dayTotal;
+    if(!monthly.has(m)) monthly.set(m, { n:0, total:0 });
+    monthly.get(m).n += recs.length;
+    monthly.get(m).total += dayTotal;
 
     for(const r of recs){
       if(r.type === "double"){
         const a = cat.get(r.procedures?.[0])?.name || `ID ${r.procedures?.[0]}`;
         const b = cat.get(r.procedures?.[1])?.name || `ID ${r.procedures?.[1]}`;
-        rowsDetail.push([d, "Doppio", a, b, parseNum(r.price), r.note || ""]);
+        detail.push({ date:d, tipo:"Doppio", a, b, price:parseNum(r.price), note:r.note||"" });
       } else {
         const a = cat.get(r.procedures?.[0])?.name || `ID ${r.procedures?.[0]}`;
-        rowsDetail.push([d, "Singolo", a, "", parseNum(r.price), r.note || ""]);
+        detail.push({ date:d, tipo:"Singolo", a, b:"", price:parseNum(r.price), note:r.note||"" });
       }
     }
   }
 
-  const rowsMonthlyArr = Array.from(rowsMonthly.entries())
+  const monthlyArr = Array.from(monthly.entries())
     .sort((a,b)=>a[0].localeCompare(b[0]))
-    .map(([m,v])=>[m, v.n, v.total]);
+    .map(([m,v])=>({ month:m, n:v.n, total:v.total }));
 
-  const tot = ytdStats(year, `${year}-12-31`);
-  const xml = buildSpreadsheetML({
-    year,
-    detail: rowsDetail,
-    daily: rowsDaily,
-    monthly: rowsMonthlyArr,
-    summary: [[`Totale ${year}`, tot.n, tot.total]]
-  });
+  const totalN = daily.reduce((s,x)=>s+x.n,0);
+  const totalEuro = daily.reduce((s,x)=>s+parseNum(x.total),0);
 
-  const blob = new Blob([xml], { type: "application/vnd.ms-excel" });
-  downloadBlob(blob, `Chirurgie_${year}_resoconto.xls`);
+  const chartUrl = chartCanvasToPngDataUrl();
+
+  const css = `
+    body{font-family:Calibri, Arial, sans-serif; color:#1b2a4a; }
+    h1{font-size:20px;margin:0 0 8px 0}
+    h2{font-size:14px;margin:18px 0 8px 0}
+    .meta{color:#5b6b84;font-size:12px;margin-bottom:10px}
+    table{border-collapse:collapse; width:100%; font-size:12px}
+    th,td{border:1px solid #a9b5c8; padding:6px 8px}
+    th{background:#e6ebf3; text-align:left}
+    td.num{text-align:right; white-space:nowrap}
+    .wrap{max-width:1100px}
+    .imgwrap{border:1px solid #a9b5c8; border-radius:10px; padding:10px; margin-top:10px}
+  `;
+
+  const tr = (cells, isHeader=false) => {
+    const tag = isHeader ? "th" : "td";
+    return "<tr>" + cells.map(c=>{
+      const isNum = typeof c === "number";
+      const cls = isNum ? ' class="num"' : "";
+      const val = isNum ? String(c) : escapeHtml(String(c));
+      return `<${tag}${cls}>${val}</${tag}>`;
+    }).join("") + "</tr>";
+  };
+
+  const tableSummary = `
+    <table>
+      ${tr(["Anno","Interventi totali","Fatturato totale (€)"], true)}
+      ${tr([year, totalN, totalEuro.toFixed(2)])}
+    </table>`;
+
+  const tableMonthly = `
+    <table>
+      ${tr(["Mese","N interventi","Totale (€)"], true)}
+      ${monthlyArr.map(r=>tr([r.month, r.n, r.total.toFixed(2)])).join("")}
+    </table>`;
+
+  const tableDaily = `
+    <table>
+      ${tr(["Data","N interventi","Totale (€)"], true)}
+      ${daily.map(r=>tr([r.date, r.n, r.total.toFixed(2)])).join("")}
+    </table>`;
+
+  const tableDetail = `
+    <table>
+      ${tr(["Data","Tipo","Intervento 1","Intervento 2","Importo (€)","Note"], true)}
+      ${detail.map(r=>tr([r.date, r.tipo, r.a, r.b, r.price.toFixed(2), r.note])).join("")}
+    </table>`;
+
+  const html = `
+  <html xmlns:o="urn:schemas-microsoft-com:office:office"
+        xmlns:x="urn:schemas-microsoft-com:office:excel"
+        xmlns="http://www.w3.org/TR/REC-html40">
+    <head>
+      <meta charset="utf-8" />
+      <style>${css}</style>
+    </head>
+    <body>
+      <div class="wrap">
+        <h1>Report Chirurgie ${escapeHtml(year)}</h1>
+        <div class="meta">Generato da Chirurgie Tracker (PWA) · include grafico + dettaglio interventi</div>
+
+        <div class="imgwrap">
+          <img src="${chartUrl}" style="width:100%; max-width:1100px;" />
+        </div>
+
+        <h2>Riepilogo</h2>
+        ${tableSummary}
+
+        <h2>Mensile</h2>
+        ${tableMonthly}
+
+        <h2>Giornaliero</h2>
+        ${tableDaily}
+
+        <h2>Dettaglio interventi (giorno per giorno)</h2>
+        ${tableDetail}
+      </div>
+    </body>
+  </html>
+  `;
+
+  const blob = new Blob([html], { type:"application/vnd.ms-excel;charset=utf-8" });
+  downloadBlob(blob, `Chirurgie_${year}_Report.xls`);
 }
 
 function buildSpreadsheetML({ year, detail, daily, monthly, summary }){
@@ -875,7 +1199,7 @@ function wire(){
 
   $("#addBtn").addEventListener("click", ()=>openModal({ mode:"add" }));
   $("#exportBtn").addEventListener("click", exportExcel);
-  $("#catalogBtn").addEventListener("click", openCatalogModal);
+  safeOn("catalogBtn","click", openCatalogModal);
   $("#backupBtn").addEventListener("click", exportBackup);
   $("#resetBtn").addEventListener("click", resetFromSeed);
 
@@ -889,8 +1213,9 @@ function wire(){
   modal.addEventListener("click", (e)=>{ if(e.target === modal) closeModal(); });
 
 
-  $("#closeCatalog").addEventListener("click", closeCatalogModal);
-  catalogModal.addEventListener("click", (e)=>{ if(e.target === catalogModal) closeCatalogModal(); });
+  safeOn("closeCatalog","click", closeCatalogModal);
+  const cm2 = getCatalogModalEl();
+  if(cm2){ cm2.addEventListener("click", (e)=>{ if(e.target === cm2) closeCatalogModal(); }); }
   $("#catSearch").addEventListener("input", renderCatalogList);
   $("#catShowArchived").addEventListener("change", renderCatalogList);
   $("#catNewBtn").addEventListener("click", newCatalogItem);
@@ -909,12 +1234,32 @@ function wire(){
 
   window.addEventListener("keydown", (e)=>{
     if(!modal.classList.contains("show")) return;
-    if(e.key === "Escape") { closeModal(); closeCatalogModal(); }
+    if(e.key === "Escape") { closeModal(); closeCatalogModal(); closeChartModal(); }
     if(e.key === "Enter" && (e.ctrlKey || e.metaKey)) confirmModal();
   });
 
   window.addEventListener("resize", ()=>drawChart());
+
+  // Chart interactions
+  const mainChart = $("#chart");
+  if(mainChart){
+    mainChart.addEventListener("click", (ev)=>{
+      const hit = mainChart._monthHit;
+      if(!hit) return;
+      const rect = mainChart.getBoundingClientRect();
+      const xCss = ev.clientX - rect.left;
+      const dpr = hit.dpr || (window.devicePixelRatio||1);
+      const x = xCss * dpr;
+      const rel = (x - hit.padL) / hit.w;
+      if(rel < 0 || rel > 1) return;
+      const idx = Math.round(rel * 11);
+      const monthKey = `${getYear()}-${String(idx+1).padStart(2,"0")}`;
+      openChartModal(monthKey);
+    });
+  }
+
 }
+
 
 function ensureCatalogFlags(){
   // Backward compatibility: se manca 'active', considera attivo
