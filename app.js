@@ -1066,6 +1066,209 @@ function roundRect(ctx, x, y, w, h, r){
 }
 
 // ------------- Export (Excel-compatible XML) -------------
+
+// ---------------- Minimal XLSX writer (no external libs) ----------------
+// Writes an .xlsx as an uncompressed ZIP of OOXML parts.
+// Supports plain text (inlineStr) and numbers.
+
+function crc32(buf){
+  let c = 0 ^ (-1);
+  for(let i=0;i<buf.length;i++){
+    c = (c >>> 8) ^ CRC32_TABLE[(c ^ buf[i]) & 0xFF];
+  }
+  return (c ^ (-1)) >>> 0;
+}
+const CRC32_TABLE = (()=>{
+  const t = new Uint32Array(256);
+  for(let i=0;i<256;i++){
+    let c = i;
+    for(let k=0;k<8;k++){
+      c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+    }
+    t[i] = c >>> 0;
+  }
+  return t;
+})();
+
+function u32le(n){ return new Uint8Array([n&255,(n>>>8)&255,(n>>>16)&255,(n>>>24)&255]); }
+function u16le(n){ return new Uint8Array([n&255,(n>>>8)&255]); }
+
+function concatBytes(chunks){
+  let len = 0;
+  for(const c of chunks) len += c.length;
+  const out = new Uint8Array(len);
+  let o = 0;
+  for(const c of chunks){ out.set(c,o); o += c.length; }
+  return out;
+}
+
+function zipStore(files){
+  // files: [{name, data(Uint8Array)}]
+  const central = [];
+  const body = [];
+  const te = new TextEncoder();
+  let offset = 0;
+
+  for(const f of files){
+    const nameBytes = te.encode(f.name);
+    const data = f.data;
+    const crc = crc32(data);
+    const localHeader = concatBytes([
+      u32le(0x04034b50),
+      u16le(20),       // version needed
+      u16le(0),        // flags
+      u16le(0),        // compression 0 = store
+      u16le(0), u16le(0), // time/date
+      u32le(crc),
+      u32le(data.length),
+      u32le(data.length),
+      u16le(nameBytes.length),
+      u16le(0),
+      nameBytes
+    ]);
+    body.push(localHeader, data);
+
+    const centralHeader = concatBytes([
+      u32le(0x02014b50),
+      u16le(20), u16le(20),
+      u16le(0),
+      u16le(0),
+      u16le(0), u16le(0),
+      u32le(crc),
+      u32le(data.length),
+      u32le(data.length),
+      u16le(nameBytes.length),
+      u16le(0), u16le(0),
+      u16le(0), u16le(0),
+      u32le(0),
+      u32le(offset),
+      nameBytes
+    ]);
+    central.push(centralHeader);
+
+    offset += localHeader.length + data.length;
+  }
+
+  const centralDir = concatBytes(central);
+  const centralOffset = offset;
+  const end = concatBytes([
+    u32le(0x06054b50),
+    u16le(0), u16le(0),
+    u16le(files.length), u16le(files.length),
+    u32le(centralDir.length),
+    u32le(centralOffset),
+    u16le(0)
+  ]);
+
+  return concatBytes([...body, centralDir, end]);
+}
+
+function colName(n){
+  let s = "";
+  while(n >= 0){
+    s = String.fromCharCode((n % 26) + 65) + s;
+    n = Math.floor(n/26) - 1;
+  }
+  return s;
+}
+
+function xmlEscape(s){
+  return String(s)
+    .replace(/&/g,"&amp;")
+    .replace(/</g,"&lt;")
+    .replace(/>/g,"&gt;")
+    .replace(/"/g,"&quot;");
+}
+
+function sheetXmlFromAoa(aoa){
+  // aoa: array of rows, each row array of values (string/number/null)
+  const rows = [];
+  const maxR = aoa.length;
+  const maxC = Math.max(1, ...aoa.map(r=>r.length));
+  const dim = `A1:${colName(maxC-1)}${maxR}`;
+
+  for(let r=0;r<aoa.length;r++){
+    const cells = [];
+    const row = aoa[r];
+    for(let c=0;c<row.length;c++){
+      const v = row[c];
+      if(v === null || typeof v === "undefined" || v === "") continue;
+      const ref = `${colName(c)}${r+1}`;
+      if(typeof v === "number" && Number.isFinite(v)){
+        cells.push(`<c r="${ref}"><v>${v}</v></c>`);
+      } else {
+        cells.push(`<c r="${ref}" t="inlineStr"><is><t>${xmlEscape(v)}</t></is></c>`);
+      }
+    }
+    rows.push(`<row r="${r+1}">${cells.join("")}</row>`);
+  }
+
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">` +
+    `<dimension ref="${dim}"/>` +
+    `<sheetData>${rows.join("")}</sheetData>` +
+    `</worksheet>`;
+}
+
+function buildXlsx(sheets){
+  // sheets: [{name, aoa}]
+  const te = new TextEncoder();
+  const files = [];
+
+  const contentTypes = [
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>`,
+    `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">`,
+    `<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>`,
+    `<Default Extension="xml" ContentType="application/xml"/>`,
+    `<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>`,
+    ...sheets.map((_,i)=>`<Override PartName="/xl/worksheets/sheet${i+1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`),
+    `<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>`,
+    `</Types>`
+  ].join("");
+
+  files.push({ name:"[Content_Types].xml", data: te.encode(contentTypes) });
+
+  const rels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
+    `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>` +
+    `</Relationships>`;
+  files.push({ name:"_rels/.rels", data: te.encode(rels) });
+
+  const workbook = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">` +
+    `<sheets>` +
+    sheets.map((s,i)=>`<sheet name="${xmlEscape(s.name)}" sheetId="${i+1}" r:id="rId${i+1}"/>`).join("") +
+    `</sheets></workbook>`;
+  files.push({ name:"xl/workbook.xml", data: te.encode(workbook) });
+
+  const wbRels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
+    sheets.map((_,i)=>`<Relationship Id="rId${i+1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i+1}.xml"/>`).join("") +
+    `<Relationship Id="rId${sheets.length+1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>` +
+    `</Relationships>`;
+  files.push({ name:"xl/_rels/workbook.xml.rels", data: te.encode(wbRels) });
+
+  const styles = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">` +
+    `<fonts count="1"><font><sz val="11"/><color theme="1"/><name val="Calibri"/><family val="2"/></font></fonts>` +
+    `<fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills>` +
+    `<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>` +
+    `<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>` +
+    `<cellXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/></cellXfs>` +
+    `<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>` +
+    `<dxfs count="0"/><tableStyles count="0" defaultTableStyle="TableStyleMedium9" defaultPivotStyle="PivotStyleLight16"/>` +
+    `</styleSheet>`;
+  files.push({ name:"xl/styles.xml", data: te.encode(styles) });
+
+  // sheets
+  for(let i=0;i<sheets.length;i++){
+    const xml = sheetXmlFromAoa(sheets[i].aoa);
+    files.push({ name:`xl/worksheets/sheet${i+1}.xml`, data: te.encode(xml) });
+  }
+
+  return zipStore(files);
+}
+
 function exportExcel(){
   const year = String(getYear());
   const yd = yearData(year);
@@ -1105,111 +1308,36 @@ function exportExcel(){
   const totalN = daily.reduce((s,x)=>s+x.n,0);
   const totalEuro = daily.reduce((s,x)=>s+parseNum(x.total),0);
 
-  // Generate chart image and embed via MHTML (Excel shows it reliably)
-  const chartUrl = chartCanvasToPngDataUrl(); // data:image/png;base64,...
-  const pngBase64 = chartUrl.split(",")[1] || "";
+  // Build sheets (AOA = array of arrays)
+  const shSummary = [
+    ["Anno", "Interventi totali", "Fatturato totale (€)"],
+    [year, totalN, Number(totalEuro.toFixed(2))]
+  ];
 
-  const css = `
-    body{font-family:Calibri, Arial, sans-serif; color:#1b2a4a; }
-    h1{font-size:20px;margin:0 0 8px 0}
-    h2{font-size:14px;margin:18px 0 8px 0}
-    .meta{color:#5b6b84;font-size:12px;margin-bottom:10px}
-    table{border-collapse:collapse; width:100%; font-size:12px}
-    th,td{border:1px solid #a9b5c8; padding:6px 8px}
-    th{background:#e6ebf3; text-align:left}
-    td.num{text-align:right; white-space:nowrap}
-    .wrap{max-width:1100px}
-    .imgwrap{border:1px solid #a9b5c8; border-radius:10px; padding:10px; margin-top:10px}
-  `;
+  const shMonthly = [
+    ["Mese", "N interventi", "Totale (€)"],
+    ...monthlyArr.map(r=>[r.month, r.n, Number(r.total.toFixed(2))])
+  ];
 
-  const tr = (cells, isHeader=false) => {
-    const tag = isHeader ? "th" : "td";
-    return "<tr>" + cells.map(c=>{
-      const isNum = typeof c === "number";
-      const cls = isNum ? ' class="num"' : "";
-      const val = isNum ? String(c) : escapeHtml(String(c));
-      return `<${tag}${cls}>${val}</${tag}>`;
-    }).join("") + "</tr>";
-  };
+  const shDaily = [
+    ["Data", "N interventi", "Totale (€)"],
+    ...daily.map(r=>[r.date, r.n, Number(r.total.toFixed(2))])
+  ];
 
-  const tableSummary = `
-    <table>
-      ${tr(["Anno","Interventi totali","Fatturato totale (€)"], true)}
-      ${tr([year, totalN, totalEuro.toFixed(2)])}
-    </table>`;
+  const shDetail = [
+    ["Data", "Tipo", "Intervento 1", "Intervento 2", "Importo (€)", "Note"],
+    ...detail.map(r=>[r.date, r.tipo, r.a, r.b, Number(r.price.toFixed(2)), r.note])
+  ];
 
-  const tableMonthly = `
-    <table>
-      ${tr(["Mese","N interventi","Totale (€)"], true)}
-      ${monthlyArr.map(r=>tr([r.month, r.n, r.total.toFixed(2)])).join("")}
-    </table>`;
+  const xlsxBytes = buildXlsx([
+    { name:"Riepilogo", aoa: shSummary },
+    { name:"Mensile", aoa: shMonthly },
+    { name:"Giornaliero", aoa: shDaily },
+    { name:"Dettaglio", aoa: shDetail },
+  ]);
 
-  const tableDaily = `
-    <table>
-      ${tr(["Data","N interventi","Totale (€)"], true)}
-      ${daily.map(r=>tr([r.date, r.n, r.total.toFixed(2)])).join("")}
-    </table>`;
-
-  const tableDetail = `
-    <table>
-      ${tr(["Data","Tipo","Intervento 1","Intervento 2","Importo (€)","Note"], true)}
-      ${detail.map(r=>tr([r.date, r.tipo, r.a, r.b, r.price.toFixed(2), r.note])).join("")}
-    </table>`;
-
-  const html = `
-    <html>
-      <head>
-        <meta charset="utf-8" />
-        <style>${css}</style>
-      </head>
-      <body>
-        <div class="wrap">
-          <h1>Report Chirurgie ${escapeHtml(year)}</h1>
-          <div class="meta">Generato da Chirurgie Tracker · include grafico + dettaglio interventi</div>
-
-          <div class="imgwrap">
-            <img src="chart.png" style="width:100%; max-width:1100px;" />
-          </div>
-
-          <h2>Riepilogo</h2>
-          ${tableSummary}
-
-          <h2>Mensile</h2>
-          ${tableMonthly}
-
-          <h2>Giornaliero</h2>
-          ${tableDaily}
-
-          <h2>Dettaglio interventi (giorno per giorno)</h2>
-          ${tableDetail}
-        </div>
-      </body>
-    </html>
-  `;
-
-  const boundary = "----=_Chirurgie_" + Math.random().toString(16).slice(2);
-  const eol = "\r\n";
-  const chunk = (b64) => b64.replace(/(.{76})/g, "$1"+eol);
-
-  const mht =
-    "MIME-Version: 1.0" + eol +
-    `Content-Type: multipart/related; boundary="${boundary}"` + eol + eol +
-
-    `--${boundary}` + eol +
-    "Content-Type: text/html; charset=utf-8" + eol +
-    "Content-Location: report.html" + eol + eol +
-    html + eol +
-
-    `--${boundary}` + eol +
-    "Content-Type: image/png" + eol +
-    "Content-Transfer-Encoding: base64" + eol +
-    "Content-Location: chart.png" + eol + eol +
-    chunk(pngBase64) + eol +
-
-    `--${boundary}--` + eol;
-
-  const blob = new Blob([mht], { type:"multipart/related; boundary=" + boundary });
-  downloadBlob(blob, `Chirurgie_${year}_Report.mht`);
+  const blob = new Blob([xlsxBytes], { type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+  downloadBlob(blob, `Chirurgie_${year}_Dati.xlsx`);
 }
 
 function buildSpreadsheetML({ year, detail, daily, monthly, summary }){
