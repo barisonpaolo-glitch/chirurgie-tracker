@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Chirurgie Tracker</title>
+  <meta name="theme-color" content="#1B2A4A">
+  <link rel="manifest" href="./manifest.json">
+  <link rel="icon" href="./icon-192.png">
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <div class="container">
+    <div class="topbar">
+      <div class="brand">
+        <div class="logo" aria-hidden="true">
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="none">
+            <path d="M6 18L18 6" stroke="#fff" stroke-width="2.6" stroke-linecap="round"/>
+            <path d="M16.5 16.5h5" stroke="#2f5fff" stroke-width="2.6" stroke-linecap="round"/>
+            <path d="M19 14v5" stroke="#2f5fff" stroke-width="2.6" stroke-linecap="round"/>
+          </svg>
+        </div>
+        <div>
+          <div class="h1">Chirurgie Tracker</div>
+          <div class="sub">Registro + dashboard. Dati offline sul dispositivo.</div>
+        </div>
+      </div>
+
+      <div class="controls">
+        <div class="pill">
+          <label for="yearSelect">Anno</label>
+          <select id="yearSelect" aria-label="Seleziona anno">
+            <option value="2026">2026</option>
+            <option value="2025">2025</option>
+          </select>
+        </div>
+
+        <button class="iconbtn" id="prevDay" title="Giorno precedente" aria-label="Giorno precedente">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M15 18l-6-6 6-6" stroke="rgba(27,42,74,.95)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
+
+        <div class="pill">
+          <label for="dateInput">Data</label>
+          <input id="dateInput" type="date" />
+        </div>
+
+        <button class="iconbtn" id="nextDay" title="Giorno successivo" aria-label="Giorno successivo">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M9 18l6-6-6-6" stroke="rgba(27,42,74,.95)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
+
+        <button class="btn" id="addBtn">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M12 5v14M5 12h14" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/>
+          </svg>
+          Nuovo intervento
+        </button>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <div class="row" style="justify-content:space-between">
+          <div>
+            <div class="h1" style="font-size:20px"><span id="datePretty">—</span></div>
+            <div class="sub">Interventi registrati nel giorno selezionato.</div>
+          </div>
+        </div>
+
+        <hr class="sep"/>
+
+        <div class="list" id="dayList"></div>
+      </div>
+
+      <div class="card">
+        <div class="h1" style="font-size:18px; margin-bottom:6px">Dashboard</div>
+        <div class="sub">Contatori e andamento economico.</div>
+
+        <div style="height:10px"></div>
+
+        <div class="statwrap">
+          <div class="stat">
+            <div class="k">Interventi (giorno)</div>
+            <div class="v"><span id="dayN">0</span> <small>n.</small></div>
+          </div>
+          <div class="stat">
+            <div class="k">Valore (giorno)</div>
+            <div class="v" id="dayTotal">€ 0</div>
+          </div>
+          <div class="stat">
+            <div class="k">Interventi (inizio anno → data selezionata)</div>
+            <div class="v"><span id="ytdN">0</span> <small>n.</small></div>
+          </div>
+          <div class="stat">
+            <div class="k">Fatturato (inizio anno → data selezionata)</div>
+            <div class="v" id="ytdTotal">€ 0</div>
+          </div>
+        </div>
+
+        <div class="canvaswrap" aria-label="Grafico andamento">
+          <canvas id="chart" width="900" height="200"></canvas>
+        </div>
+
+        <div class="footerbtns">
+          <button class="btn" id="exportBtn">Esporta Excel</button>
+          <button class="btn secondary" id="backupBtn">Esporta backup</button>
+
+          <label class="btn secondary" style="cursor:pointer">
+            Importa backup
+            <input id="importFile" type="file" accept="application/json" style="display:none">
+          </label>
+
+          <button class="btn danger" id="resetBtn">Reset dati iniziali</button>
+        </div>
+
+        <div style="height:10px"></div>
+        <div class="note">
+          I dati restano salvati <b>solo sul dispositivo</b>. Per spostarli su un altro telefono/PC: “Esporta backup” → “Importa backup”.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal -->
+  <div class="modal" id="modal" aria-hidden="true">
+    <div class="panel" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <header>
+        <div class="t" id="modalTitle">Nuovo intervento</div>
+        <button class="iconbtn" id="closeModal" aria-label="Chiudi">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M18 6L6 18M6 6l12 12" stroke="rgba(27,42,74,.95)" stroke-width="2.2" stroke-linecap="round"/>
+          </svg>
+        </button>
+      </header>
+
+      <div class="body">
+        <div class="mode" style="margin-bottom:10px">
+          <button type="button" class="toggle active" id="toggleSingle"><span class="dot"></span> Singolo</button>
+          <button type="button" class="toggle" id="toggleDouble"><span class="dot"></span> Doppio intervento</button>
+        </div>
+
+        <div class="row2">
+          <!-- LEFT: picking -->
+          <div>
+            <!-- Single -->
+            <div id="singleBlock">
+              <div class="field">
+                <label>Cerca intervento (scrivi la prima lettera…)</label>
+                <input id="searchSingle" type="text" placeholder="Es. s, tplo, artroscopia…" autocomplete="off" />
+                <div class="hint" id="defaultHintSingle">Seleziona un intervento</div>
+              </div>
+
+              <div class="badge">
+                Selezionato: <b id="selectedSingle">—</b>
+              </div>
+
+              <div style="height:10px"></div>
+              <div class="picklist" id="pickSingle"></div>
+            </div>
+
+            <!-- Double -->
+            <div id="doubleBlock" style="display:none">
+              <div class="field">
+                <label>Intervento 1 (cerca)</label>
+                <input id="searchA" type="text" placeholder="Prima lettera…" autocomplete="off" />
+                <div class="hint">Seleziona il primo intervento</div>
+              </div>
+              <div class="badge">1: <b id="selectedA">—</b></div>
+
+              <div style="height:10px"></div>
+              <div class="picklist" id="pickA"></div>
+
+              <div style="height:12px"></div>
+
+              <div class="field">
+                <label>Intervento 2 (cerca)</label>
+                <input id="searchB" type="text" placeholder="Prima lettera…" autocomplete="off" />
+                <div class="hint" id="defaultHintDouble">Seleziona 2 interventi da sommare</div>
+              </div>
+              <div class="badge">2: <b id="selectedB">—</b></div>
+
+              <div style="height:10px"></div>
+              <div class="picklist" id="pickB"></div>
+            </div>
+          </div>
+
+          <!-- RIGHT: amount + note -->
+          <div>
+            <div class="field">
+              <label>Importo (€) (modificabile)</label>
+              <input id="priceInput" type="number" inputmode="decimal" step="0.01" placeholder="0,00" />
+              <div class="hint">Ctrl/⌘ + Invio = salva rapido</div>
+            </div>
+
+            <div class="field" style="margin-top:10px">
+              <label>Note (facoltative)</label>
+              <input id="noteInput" type="text" placeholder="Es. sconto, combinato, ecc." />
+            </div>
+
+            <div style="height:12px"></div>
+            <div class="row" style="justify-content:flex-end">
+              <button class="btn secondary" type="button" onclick="document.getElementById('closeModal').click()">Annulla</button>
+              <button class="btn" id="confirmModal" type="button">Salva</button>
+            </div>
+
+            <div style="height:10px"></div>
+            <div class="note">
+              Per il “doppio intervento” l’importo parte dalla somma dei due default: puoi modificarlo liberamente prima di salvare.
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="./app.js"></script>
+</body>
+</html>
