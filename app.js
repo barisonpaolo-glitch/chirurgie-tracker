@@ -272,7 +272,7 @@ let modalCtx = null;
 function openModal({ mode, recId }){
   const y = getYear();
   const dateStr = getDate();
-  const cat = yearData(y).catalog;
+  const cat = yearData(y).catalog.filter(c => c.active !== false);
   const catMap = catalogMap(y);
 
   modalCtx = { mode, recId, y, dateStr, cat, catMap, modeType: "single", selA:null, selB:null };
@@ -459,6 +459,170 @@ function makeRid(dateStr){
   const r = Math.random().toString(16).slice(2,6);
   return `${dateStr.replaceAll("-","")}-${t}-${r}`;
 }
+
+
+// ---------------- Catalog modal (CRUD interventi) ----------------
+const catalogModal = $("#catalogModal");
+let catalogCtx = null;
+
+function getCatalog(year){
+  return yearData(year).catalog || [];
+}
+function nextCatalogId(year){
+  const cat = getCatalog(year);
+  let maxId = 0;
+  for(const c of cat){
+    const id = Number(c.id);
+    if(Number.isFinite(id) && id > maxId) maxId = id;
+  }
+  return maxId + 1;
+}
+
+function openCatalogModal(){
+  const y = getYear();
+  catalogCtx = { year: y, selectedId: null };
+  $("#catSearch").value = "";
+  $("#catShowArchived").checked = false;
+  newCatalogItem();
+  renderCatalogList();
+  catalogModal.classList.add("show");
+  $("#catSearch").focus();
+}
+function closeCatalogModal(){
+  if(!catalogModal) return;
+  catalogModal.classList.remove("show");
+  catalogCtx = null;
+}
+
+function renderCatalogList(){
+  if(!catalogCtx) return;
+  const year = catalogCtx.year;
+  const cat = getCatalog(year);
+  const q = ($("#catSearch").value || "").trim().toLowerCase();
+  const showArchived = $("#catShowArchived").checked;
+
+  const items = cat
+    .filter(c => showArchived ? true : (c.active !== false))
+    .filter(c => {
+      if(!q) return true;
+      const nm = String(c.name || "").toLowerCase();
+      return nm.startsWith(q) || nm.includes(q);
+    })
+    .sort((a,b) => String(a.name||"").localeCompare(String(b.name||""), "it-IT"))
+    .slice(0, 300);
+
+  const list = $("#catList");
+  list.innerHTML = "";
+
+  for(const c of items){
+    const btn = document.createElement("button");
+    btn.type = "button";
+    const archived = (c.active === false);
+    btn.innerHTML = `
+      <div class="nm">${escapeHtml(c.name || "(senza nome)")}${archived ? " <span style='color:rgba(91,107,132,.8)'>· archiviato</span>" : ""}</div>
+      <div class="pr">ID ${escapeHtml(c.id)} · ${euro(c.default_price)}</div>
+    `;
+    btn.addEventListener("click", () => selectCatalogItem(Number(c.id)));
+    list.appendChild(btn);
+  }
+
+  if(items.length === 0){
+    const div = document.createElement("div");
+    div.className = "note";
+    div.style.padding = "10px 12px";
+    div.textContent = "Nessun intervento trovato.";
+    list.appendChild(div);
+  }
+
+  if(catalogCtx.selectedId == null && items.length > 0 && $("#catId").value !== "(nuovo)"){
+    selectCatalogItem(Number(items[0].id));
+  }
+}
+
+function selectCatalogItem(id){
+  if(!catalogCtx) return;
+  const year = catalogCtx.year;
+  const cat = getCatalog(year);
+  const item = cat.find(c => Number(c.id) === Number(id));
+  if(!item) return;
+
+  catalogCtx.selectedId = Number(id);
+  $("#catId").value = String(item.id);
+  $("#catName").value = String(item.name || "");
+  $("#catPrice").value = String(parseNum(item.default_price));
+  $("#catActive").checked = (item.active !== false);
+  $("#catArchiveBtn").textContent = (item.active === false) ? "Ripristina" : "Archivia";
+}
+
+function newCatalogItem(){
+  if(!catalogCtx) return;
+  catalogCtx.selectedId = null;
+  $("#catId").value = "(nuovo)";
+  $("#catName").value = "";
+  $("#catPrice").value = "";
+  $("#catActive").checked = true;
+  $("#catArchiveBtn").textContent = "Archivia";
+}
+
+function saveCatalogItem(){
+  if(!catalogCtx) return;
+  const year = catalogCtx.year;
+  const cat = getCatalog(year);
+
+  const name = ($("#catName").value || "").trim();
+  const price = parseNum($("#catPrice").value);
+  const active = $("#catActive").checked;
+
+  if(!name){
+    alert("Inserisci un nome per l’intervento.");
+    $("#catName").focus();
+    return;
+  }
+
+  if(catalogCtx.selectedId == null){
+    const id = nextCatalogId(year);
+    cat.push({ id, name, default_price: price, active });
+    yearData(year).catalog = cat;
+    saveState(state);
+    catalogCtx.selectedId = id;
+    $("#catId").value = String(id);
+    alert("Intervento aggiunto.");
+  } else {
+    const item = cat.find(c => Number(c.id) === Number(catalogCtx.selectedId));
+    if(!item){ alert("Elemento non trovato."); return; }
+    item.name = name;
+    item.default_price = price;
+    item.active = active;
+    saveState(state);
+    alert("Modifiche salvate.");
+  }
+
+  $("#catArchiveBtn").textContent = ($("#catActive").checked) ? "Archivia" : "Ripristina";
+  renderCatalogList();
+  render();
+}
+
+function toggleArchiveCatalogItem(){
+  if(!catalogCtx || catalogCtx.selectedId == null) return;
+  const year = catalogCtx.year;
+  const cat = getCatalog(year);
+  const item = cat.find(c => Number(c.id) === Number(catalogCtx.selectedId));
+  if(!item) return;
+
+  const nowActive = (item.active !== false);
+  if(nowActive){
+    if(!confirm("Archiviare questo intervento?\n\nNon comparirà più nella selezione, ma resterà compatibile con i record già salvati.")) return;
+    item.active = false;
+  } else {
+    item.active = true;
+  }
+  $("#catActive").checked = (item.active !== false);
+  $("#catArchiveBtn").textContent = (item.active === false) ? "Ripristina" : "Archivia";
+  saveState(state);
+  renderCatalogList();
+  render();
+}
+
 
 // ------------- Chart -------------
 function drawChart(){
@@ -711,6 +875,7 @@ function wire(){
 
   $("#addBtn").addEventListener("click", ()=>openModal({ mode:"add" }));
   $("#exportBtn").addEventListener("click", exportExcel);
+  $("#catalogBtn").addEventListener("click", openCatalogModal);
   $("#backupBtn").addEventListener("click", exportBackup);
   $("#resetBtn").addEventListener("click", resetFromSeed);
 
@@ -723,6 +888,16 @@ function wire(){
   $("#closeModal").addEventListener("click", closeModal);
   modal.addEventListener("click", (e)=>{ if(e.target === modal) closeModal(); });
 
+
+  $("#closeCatalog").addEventListener("click", closeCatalogModal);
+  catalogModal.addEventListener("click", (e)=>{ if(e.target === catalogModal) closeCatalogModal(); });
+  $("#catSearch").addEventListener("input", renderCatalogList);
+  $("#catShowArchived").addEventListener("change", renderCatalogList);
+  $("#catNewBtn").addEventListener("click", newCatalogItem);
+  $("#catSaveBtn").addEventListener("click", saveCatalogItem);
+  $("#catArchiveBtn").addEventListener("click", toggleArchiveCatalogItem);
+
+
   $("#toggleSingle").addEventListener("click", ()=>setModeType("single"));
   $("#toggleDouble").addEventListener("click", ()=>setModeType("double"));
 
@@ -734,15 +909,28 @@ function wire(){
 
   window.addEventListener("keydown", (e)=>{
     if(!modal.classList.contains("show")) return;
-    if(e.key === "Escape") closeModal();
+    if(e.key === "Escape") { closeModal(); closeCatalogModal(); }
     if(e.key === "Enter" && (e.ctrlKey || e.metaKey)) confirmModal();
   });
 
   window.addEventListener("resize", ()=>drawChart());
 }
 
+function ensureCatalogFlags(){
+  // Backward compatibility: se manca 'active', considera attivo
+  for(const y of Object.keys(state.years || {})){
+    const yd = state.years[y];
+    if(!yd?.catalog) continue;
+    for(const c of yd.catalog){
+      if(typeof c.active === "undefined") c.active = true;
+    }
+  }
+  saveState(state);
+}
+
 async function init(){
   state = await loadState();
+  ensureCatalogFlags();
   wire();
 
   if("serviceWorker" in navigator){

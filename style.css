@@ -372,3 +372,6 @@ hr.sep{
   margin-top: 8px;
 }
 .badge b{font-weight:800}
+
+.checkrow{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--muted);user-select:none}
+.checkrow input{width:16px;height:16px}

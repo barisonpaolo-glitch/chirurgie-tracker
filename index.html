@@ -106,6 +106,7 @@
 
         <div class="footerbtns">
           <button class="btn" id="exportBtn">Esporta Excel</button>
+          <button class="btn secondary" id="catalogBtn">Catalogo interventi</button>
           <button class="btn secondary" id="backupBtn">Esporta backup</button>
 
           <label class="btn secondary" style="cursor:pointer">
@@ -217,5 +218,87 @@
   </div>
 
   <script src="./app.js"></script>
+
+
+  <!-- Catalog Modal -->
+  <div class="modal" id="catalogModal" aria-hidden="true">
+    <div class="panel" role="dialog" aria-modal="true" aria-labelledby="catalogTitle">
+      <header>
+        <div class="t" id="catalogTitle">Catalogo interventi</div>
+        <button class="iconbtn" id="closeCatalog" aria-label="Chiudi">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M18 6L6 18M6 6l12 12" stroke="rgba(27,42,74,.95)" stroke-width="2.2" stroke-linecap="round"/>
+          </svg>
+        </button>
+      </header>
+
+      <div class="body">
+        <div class="row2">
+          <div>
+            <div class="field">
+              <label>Cerca (nome o prima lettera)</label>
+              <input id="catSearch" type="text" placeholder="Es. t, sterilizzazione, artro…" autocomplete="off" />
+              <div class="hint">
+                <label class="checkrow">
+                  <input id="catShowArchived" type="checkbox" />
+                  Mostra anche archiviati
+                </label>
+              </div>
+            </div>
+
+            <div style="height:10px"></div>
+            <div class="picklist" id="catList"></div>
+
+            <div style="height:10px"></div>
+            <div class="note">
+              Suggerimento: “Archivia” rimuove l’intervento dalle liste di selezione, ma mantiene la compatibilità con i record già salvati.
+            </div>
+          </div>
+
+          <div>
+            <div class="field">
+              <label>ID</label>
+              <input id="catId" type="text" readonly />
+              <div class="hint">L’ID viene assegnato automaticamente (non modificarlo).</div>
+            </div>
+
+            <div class="field" style="margin-top:10px">
+              <label>Nome intervento</label>
+              <input id="catName" type="text" placeholder="Es. Sterilizzazione femmina" />
+            </div>
+
+            <div class="field" style="margin-top:10px">
+              <label>Prezzo default (€)</label>
+              <input id="catPrice" type="number" inputmode="decimal" step="0.01" placeholder="0,00" />
+              <div class="hint">Valore proposto quando lo selezioni (poi puoi modificarlo nel singolo record).</div>
+            </div>
+
+            <div class="field" style="margin-top:10px">
+              <label>Stato</label>
+              <label class="checkrow" style="margin-top:2px">
+                <input id="catActive" type="checkbox" checked />
+                Attivo (visibile in selezione)
+              </label>
+            </div>
+
+            <div style="height:12px"></div>
+            <div class="row" style="justify-content:space-between">
+              <button class="btn secondary" id="catNewBtn" type="button">Nuovo</button>
+              <div class="row" style="gap:10px">
+                <button class="btn secondary" id="catArchiveBtn" type="button">Archivia</button>
+                <button class="btn" id="catSaveBtn" type="button">Salva</button>
+              </div>
+            </div>
+
+            <div style="height:10px"></div>
+            <div class="note">
+              Nota: cambiare il nome nel catalogo aggiorna anche le etichette visualizzate nei record esistenti. I prezzi dei record già salvati non cambiano.
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
 </body>
 </html>
