@@ -762,10 +762,105 @@ function drawMonthlyChart(){
   canvas._monthHit = { padL, padT, w, h, dpr };
 }
 
+
 function drawChart(){
-  // Backward compatible name called by render()
-  drawMonthlyChart();
+  const y = getYear();
+  const dateStr = getDate();
+  const data = allDailyTotals(y); // [{date,total,n}]
+  const canvas = $("#chart");
+  const ctx = canvas.getContext("2d");
+
+  const rect = canvas.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = Math.max(520, Math.floor(rect.width * dpr));
+  canvas.height = Math.floor(230 * dpr);
+
+  ctx.clearRect(0,0,canvas.width, canvas.height);
+
+  const padL = 56*dpr, padR = 18*dpr, padT = 18*dpr, padB = 46*dpr;
+  const w = canvas.width - padL - padR;
+  const h = canvas.height - padT - padB;
+
+  const values = data.map(d=>d.total);
+  const max = Math.max(1, ...values);
+  const maxY = max * 1.12;
+
+  // grid + y labels
+  ctx.strokeStyle = "rgba(169,181,200,.55)";
+  ctx.lineWidth = 1*dpr;
+  ctx.fillStyle = "rgba(91,107,132,.95)";
+  ctx.font = `${12*dpr}px system-ui`;
+
+  const steps = 4;
+  for(let i=0;i<=steps;i++){
+    const y0 = padT + (h * i/steps);
+    ctx.beginPath();
+    ctx.moveTo(padL, y0);
+    ctx.lineTo(padL+w, y0);
+    ctx.stroke();
+    const v = maxY * (1 - i/steps);
+    const lbl = euro(v).replace(/\u00A0/g," ");
+    ctx.fillText(lbl, 6*dpr, y0 + 4*dpr);
+  }
+
+  // x labels: months
+  const monthLbl = ["Gen","Feb","Mar","Apr","Mag","Giu","Lug","Ago","Set","Ott","Nov","Dic"];
+  ctx.fillStyle = "rgba(91,107,132,.95)";
+  ctx.font = `${12*dpr}px system-ui`;
+
+  // precompute month start indices
+  const monthStarts = [];
+  for(let m=1;m<=12;m++){
+    const mk = `${y}-${String(m).padStart(2,"0")}-01`;
+    // find first index >= mk
+    let idx = 0;
+    while(idx < data.length && data[idx].date < mk) idx++;
+    monthStarts.push({ m, idx: Math.min(idx, data.length-1) });
+  }
+
+  monthStarts.forEach(({m,idx})=>{
+    const x = padL + (w * (idx/(data.length-1)));
+    ctx.fillText(monthLbl[m-1], x - 12*dpr, padT + h + 30*dpr);
+  });
+
+  // line
+  ctx.strokeStyle = "rgba(27,42,74,.95)";
+  ctx.lineWidth = 2*dpr;
+  ctx.beginPath();
+  data.forEach((d,i)=>{
+    const x = padL + (w * (i/(data.length-1)));
+    const yv = padT + h * (1 - (d.total / maxY));
+    if(i===0) ctx.moveTo(x,yv); else ctx.lineTo(x,yv);
+  });
+  ctx.stroke();
+
+  // subtle fill under curve (professional but not noisy)
+  ctx.lineTo(padL+w, padT+h);
+  ctx.lineTo(padL, padT+h);
+  ctx.closePath();
+  ctx.fillStyle = "rgba(47,95,255,.08)";
+  ctx.fill();
+
+  // highlight today point
+  const ti = data.findIndex(d=>d.date===dateStr);
+  if(ti >= 0){
+    const x = padL + (w * (ti/(data.length-1)));
+    const yv = padT + h * (1 - (data[ti].total / maxY));
+    ctx.fillStyle = "rgba(47,95,255,.95)";
+    ctx.beginPath();
+    ctx.arc(x,yv, 4.6*dpr, 0, Math.PI*2);
+    ctx.fill();
+  }
+
+  // title hint
+  ctx.fillStyle = "rgba(27,42,74,.95)";
+  ctx.font = `${13*dpr}px system-ui`;
+  ctx.fillText("Andamento annuale · mesi in asse · tocca un punto per dettaglio", padL, 14*dpr);
+
+  // store hit mapping for clicks
+  canvas._hit = { padL, padT, w, h, dpr, n:data.length };
 }
+
 
 // ---------------- Chart zoom modal ----------------
 let chartModal = null;
@@ -1240,11 +1335,22 @@ function wire(){
 
   window.addEventListener("resize", ()=>drawChart());
 
-  // Chart interactions
+  
+  // Chart modal controls (close + zoom)
+  safeOn("closeChart","click", closeChartModal);
+  const _chartM = getChartModalEl();
+  if(_chartM){
+    _chartM.addEventListener("click", (e)=>{ if(e.target === _chartM) closeChartModal(); });
+  }
+  safeOn("zoomInBtn","click", ()=>{ chartZoom = Math.min(4, chartZoom + 0.35); drawZoomChart(); });
+  safeOn("zoomOutBtn","click", ()=>{ chartZoom = Math.max(1, chartZoom - 0.35); drawZoomChart(); });
+
+// Chart interactions
+    // Chart interactions: click -> open month detail
   const mainChart = $("#chart");
   if(mainChart){
     mainChart.addEventListener("click", (ev)=>{
-      const hit = mainChart._monthHit;
+      const hit = mainChart._hit;
       if(!hit) return;
       const rect = mainChart.getBoundingClientRect();
       const xCss = ev.clientX - rect.left;
@@ -1252,9 +1358,11 @@ function wire(){
       const x = xCss * dpr;
       const rel = (x - hit.padL) / hit.w;
       if(rel < 0 || rel > 1) return;
-      const idx = Math.round(rel * 11);
-      const monthKey = `${getYear()}-${String(idx+1).padStart(2,"0")}`;
-      openChartModal(monthKey);
+      const idx = Math.max(0, Math.min(hit.n-1, Math.round(rel * (hit.n-1))));
+      const y = getYear();
+      const date = allDailyTotals(y)[idx]?.date;
+      if(!date) return;
+      openChartModal(date.slice(0,7));
     });
   }
 
