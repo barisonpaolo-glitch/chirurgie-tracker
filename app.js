@@ -275,13 +275,14 @@ function openModal({ mode, recId }){
   const cat = yearData(y).catalog.filter(c => c.active !== false);
   const catMap = catalogMap(y);
 
-  modalCtx = { mode, recId, y, dateStr, cat, catMap, modeType: "single", selA:null, selB:null };
+  modalCtx = { mode, recId, y, dateStr, cat, catMap, modeType: "single", selA:null, selB:null, priceTouched:false };
 
   $("#modalTitle").textContent = mode === "edit" ? "Modifica intervento" : "Nuovo intervento";
   $("#searchSingle").value = "";
   $("#searchA").value = "";
   $("#searchB").value = "";
   $("#priceInput").value = "";
+  modalCtx.priceTouched = false;
   $("#noteInput").value = "";
 
   $("#selectedSingle").textContent = "—";
@@ -307,6 +308,7 @@ function openModal({ mode, recId }){
       setModeType("single");
     }
     $("#priceInput").value = String(rec.price ?? "");
+    modalCtx.priceTouched = true;
   }
 
   rebuildPicklists();
@@ -339,6 +341,19 @@ function setModeType(t){
     $("#defaultHintSingle").textContent = def != null ? `Default: ${euro(def)} (modificabile)` : "Seleziona un intervento";
   } else {
     updateDoubleDefaultHint();
+  }
+
+
+  // Recompute suggested price when switching mode, unless user already edited it
+  if(!modalCtx.priceTouched){
+    if(t==="single"){
+      const def = modalCtx.selA ? (modalCtx.catMap.get(modalCtx.selA)?.default_price ?? 0) : 0;
+      $("#priceInput").value = String(parseNum(def));
+    } else {
+      const a = modalCtx.selA ? (modalCtx.catMap.get(modalCtx.selA)?.default_price ?? 0) : 0;
+      const b = modalCtx.selB ? (modalCtx.catMap.get(modalCtx.selB)?.default_price ?? 0) : 0;
+      $("#priceInput").value = String(parseNum(a + b));
+    }
   }
 
   rebuildPicklists();
@@ -384,7 +399,12 @@ function buildPicklist(container, query, onPick){
 }
 
 function maybeFillPriceDefault(v){
-  if(!$("#priceInput").value) $("#priceInput").value = String(v ?? 0);
+  // Fill/overwrite ONLY if user hasn't manually touched the price field
+  if(!modalCtx) return;
+  const inp = $("#priceInput");
+  if(!inp) return;
+  if(modalCtx.priceTouched) return;
+  inp.value = String(parseNum(v));
 }
 
 function selectSingle(id){
@@ -1481,6 +1501,8 @@ function wire(){
   $("#searchB").addEventListener("input", rebuildPicklists);
 
   $("#confirmModal").addEventListener("click", confirmModal);
+  $("#priceInput").addEventListener("input", ()=>{ if(modalCtx) modalCtx.priceTouched = true; });
+
 
   window.addEventListener("keydown", (e)=>{
     if(!modal.classList.contains("show")) return;

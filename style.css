@@ -411,3 +411,27 @@ hr.sep{
   #catalogModal .catActions{padding:12px 0 6px 0}
   #catalogModal .btn{width:auto}
 }
+
+/* Add/Edit modal mobile */
+#modal .panel{max-width:980px}
+#modal .body{overflow:auto}
+#modal .modalActions{
+  position:sticky;
+  bottom:0;
+  z-index:3;
+  background:rgba(255,255,255,.92);
+  padding:10px 0 2px 0;
+  margin-top:10px;
+  border-top:1px solid rgba(169,181,200,.55);
+  backdrop-filter:saturate(140%) blur(6px);
+}
+#modal #pickSingle, #modal #pickA, #modal #pickB{max-height:42vh}
+
+@media (max-width: 860px){
+  #modal .panel{width:calc(100% - 18px); max-height:calc(100vh - 18px)}
+  #modal .body{max-height:calc(100vh - 86px); padding-bottom:14px}
+  #modal .row2{grid-template-columns:1fr !important}
+  #modal #pickSingle, #modal #pickA, #modal #pickB{max-height:28vh}
+  #modal .mode{display:flex; gap:10px}
+  #modal .toggle{flex:1}
+}
